@@ -1,57 +1,11 @@
 import pytest
 from playwright.sync_api import Page
-from pages.fanatical_home_page import FanaticalHomePage
+from tests.fanatical_listing import (
+    BUNDLES_LIST_URL,
+    collect_pick_and_mix_urls,
+    dismiss_language_banner,
+)
 from tests.utils_html_report import generar_html_desde_url
-
-BASE_URL = "https://www.fanatical.com"
-BUNDLES_LIST_URL = f"{BASE_URL}/en/bundle/games"
-
-
-def _dismiss_language_banner(page: Page) -> None:
-    """Mantener inglés si aparece el banner de idioma."""
-    try:
-        btn = page.locator("button:has-text('permanecer')").first
-        if btn.is_visible(timeout=1500):
-            btn.click(timeout=2000)
-    except Exception:
-        pass
-
-
-def _collect_bundle_urls(page: Page) -> list[str]:
-    """URLs absolutas de los bundles visibles en el listado (HitCards)."""
-    home = FanaticalHomePage(page)
-    home.handle_popups()
-    _dismiss_language_banner(page)
-
-    # Esperar hidratación React (attached: los del menú pueden no ser visibles)
-    page.wait_for_selector("a.HitCard__main__cover", state="attached", timeout=30000)
-
-    # Scroll por si hay lazy-load
-    prev = 0
-    for _ in range(10):
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(600)
-        n = page.locator("a.HitCard__main__cover").count()
-        if n == prev:
-            break
-        prev = n
-
-    # Solo pick-and-mix: el scraper usa article.PickAndMixCard (no aplica a /bundle/)
-    hrefs = page.eval_on_selector_all(
-        "a.HitCard__main__cover",
-        """els => [...new Set(
-            els.map(e => (e.getAttribute('href') || '').split('?')[0])
-               .filter(h => h.includes('/pick-and-mix/'))
-        )]""",
-    )
-
-    absolute = []
-    for href in hrefs:
-        if href.startswith("http"):
-            absolute.append(href)
-        else:
-            absolute.append(f"{BASE_URL}{href}")
-    return absolute
 
 
 def test_all_bundles(page: Page, pretty_report: bool):
@@ -63,11 +17,11 @@ def test_all_bundles(page: Page, pretty_report: bool):
 
     print(f"\n[1/3] Cargando listado: {BUNDLES_LIST_URL}")
     page.goto(BUNDLES_LIST_URL, wait_until="domcontentloaded")
-    _dismiss_language_banner(page)
+    dismiss_language_banner(page)
     print(f"Pagina cargada: {page.title()}")
 
     print("\n[2/3] Extrayendo URLs pick-and-mix (HitCards)...")
-    absolute_urls = _collect_bundle_urls(page)
+    absolute_urls = collect_pick_and_mix_urls(page)
     print(f"Total pick-and-mix unicos: {len(absolute_urls)}")
     for i, u in enumerate(absolute_urls, 1):
         print(f"  {i}. {u}")

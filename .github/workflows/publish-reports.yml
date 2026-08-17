@@ -51,6 +51,8 @@ jobs:
           pip install -r requirements.txt
           python -c "import playwright; print('playwright', getattr(playwright, '__version__', 'unknown'))"
           python -m playwright install --with-deps chromium
+          # Asegura imports `pages` / `tests` en la colección de pytest
+          echo "PYTHONPATH=${{ github.workspace }}" >> "$GITHUB_ENV"
 
       - name: Generate Fanatical combined report
         if: ${{ inputs.source == 'both' || inputs.source == 'fanatical' }}

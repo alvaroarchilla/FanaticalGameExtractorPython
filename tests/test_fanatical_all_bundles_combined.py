@@ -1,9 +1,8 @@
-import pytest
 from playwright.sync_api import Page
-from tests.test_fanatical_all_bundles import (
+from tests.fanatical_listing import (
     BUNDLES_LIST_URL,
-    _collect_bundle_urls,
-    _dismiss_language_banner,
+    collect_pick_and_mix_urls,
+    dismiss_language_banner,
 )
 from tests.utils_html_report import generar_html_combinado_desde_urls
 
@@ -24,11 +23,11 @@ def test_all_bundles_combined(page: Page, pretty_report: bool, request):
 
     print(f"\n[1/3] Cargando listado: {BUNDLES_LIST_URL}")
     page.goto(BUNDLES_LIST_URL, wait_until="domcontentloaded")
-    _dismiss_language_banner(page)
+    dismiss_language_banner(page)
     print(f"Pagina cargada: {page.title()}")
 
     print("\n[2/3] Extrayendo URLs pick-and-mix...")
-    absolute_urls = _collect_bundle_urls(page)
+    absolute_urls = collect_pick_and_mix_urls(page)
     print(f"Total pick-and-mix unicos: {len(absolute_urls)}")
     for i, u in enumerate(absolute_urls, 1):
         print(f"  {i}. {u}")
