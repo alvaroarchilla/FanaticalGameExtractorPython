@@ -1,0 +1,94 @@
+name: Publish reports to GitHub Pages
+
+# Genera los HTML combinados (Fanatical / Humble / ambos) y los publica en GH Pages.
+# Requiere: Settings → Pages → Source = GitHub Actions
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Which combined report(s) to generate
+        type: choice
+        options:
+          - both
+          - fanatical
+          - humble
+        default: both
+      pretty:
+        description: Use --pretty HTML
+        type: boolean
+        default: true
+  # Descomenta para regenerar semanalmente (puede tardar mucho / fallar por rate-limits)
+  # schedule:
+  #   - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Generate Fanatical combined report
+        if: ${{ inputs.source == 'both' || inputs.source == 'fanatical' }}
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+        run: |
+          PRETTY_FLAG=""
+          if [ "${{ inputs.pretty }}" = "true" ]; then PRETTY_FLAG="--pretty"; fi
+          pytest tests/test_fanatical_all_bundles_combined.py -s $PRETTY_FLAG \
+            --html-output all_fanatical_pick_and_mix_combined
+
+      - name: Generate Humble combined report
+        if: ${{ inputs.source == 'both' || inputs.source == 'humble' }}
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+        run: |
+          PRETTY_FLAG=""
+          if [ "${{ inputs.pretty }}" = "true" ]; then PRETTY_FLAG="--pretty"; fi
+          pytest tests/test_humble_all_bundles_combined.py -s $PRETTY_FLAG \
+            --html-output all_humble_game_bundles_combined
+
+      - name: Build site folder
+        run: |
+          mkdir -p site
+          python .github/scripts/build_pages_index.py
+          ls -la site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

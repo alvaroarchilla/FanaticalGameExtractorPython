@@ -1,156 +1,101 @@
-# Fanatical & Humble Bundle Game Extractor (Playwright)
+# Bundle Game Extractor (Playwright)
 
-Extrae los juegos de bundles de [Fanatical](https://www.fanatical.com) (pick-and-mix) y de [Humble Bundle](https://www.humblebundle.com/games), consulta sus datos en Steam (precio, reviews, categorías, tags, etc.) y genera reportes **HTML interactivos** (DataTables).
+Automated extractor for game data from [Fanatical](https://www.fanatical.com) pick-and-mix bundles and [Humble Bundle](https://www.humblebundle.com/games). Each title is enriched with Steam metadata (price, reviews, categories, tags, etc.) and exported as an interactive HTML report (DataTables).
 
-Incluye un modo `--pretty` con portada del juego, estilo oscuro y resaltado dorado para títulos con **pantalla compartida / multijugador local**.
+Optional `--pretty` mode adds cover art, dark styling, and a gold highlight for local / shared-screen multiplayer titles.
 
-> Uso personal / educativo. Respeta los términos de Fanatical, Humble Bundle y Steam; no abuses de la frecuencia de las peticiones.
+> For personal / educational use. Respect Fanatical, Humble Bundle and Steam terms of service, and avoid aggressive request rates.
 
-## Características
+## Features
 
-- Flujo en dos fases: recolecta ítems en Fanatical/Humble y luego visita Steam
-- Un bundle concreto, todos los del listado (un HTML por bundle) o **un HTML combinado**
-- **Humble**: tiers con precio de desbloqueo (“Pay at least …”) y lista de juegos por tier
-- Reportes en `reports/` con ordenación y búsqueda
-- `--pretty`: imágenes de cabecera Steam, marco dorado en local/shared screen, enlaces cortos
-- Columna **Links**: Steam + enlace al bundle de origen (Fanatical o Humble)
+- Two-phase flow: collect items from Fanatical/Humble, then query Steam
+- Single-bundle report, one report per listing item, or one **combined** HTML
+- Humble: unlock tiers with price and games per tier
+- Combined reports include Steam + source-bundle links
+- `--pretty`: Steam/Humble covers and local-multiplayer highlighting
 
-## Requisitos
+## Requirements
 
-- Python 3.10+ (probado con 3.13)
-- Windows, macOS o Linux
+- Python 3.10+
+- Windows, macOS or Linux
 
-## Instalación
+## Setup
 
 ```bash
-git clone <URL_DEL_REPO>
+git clone <REPO_URL>
 cd FanaticalGameExtractorPlaywright
 
 python -m venv venv
-
-# Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# macOS / Linux
-source venv/bin/activate
+# Windows: .\venv\Scripts\Activate.ps1
+# macOS/Linux: source venv/bin/activate
 
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-## Uso
+## CLI options
 
-Los comandos se ejecutan desde la raíz del proyecto con el entorno virtual activado.
-
-### Opciones globales
-
-| Opción | Descripción |
+| Option | Description |
 |--------|-------------|
-| `--url` | URL del bundle (tests parametrizados) |
-| `--pretty` | HTML enriquecido (imagen, local MP dorado) |
-| `--html-output` | Nombre base del archivo HTML (sin `.html`) |
-| `--headed` | Abre el navegador visible (pytest-playwright) |
-
----
+| `--url` | Bundle URL (parametrized tests) |
+| `--pretty` | Enriched HTML report |
+| `--html-output` | Output basename (without `.html`) |
+| `--headed` | Show the browser (pytest-playwright) |
 
 ## Fanatical
 
-### Un solo pick-and-mix
-
 ```bash
-pytest tests/test_fanatical_to_html_parametrized.py -s --url "https://www.fanatical.com/en/pick-and-mix/TU-BUNDLE"
-pytest tests/test_fanatical_to_html_parametrized.py -s --pretty --url "https://www.fanatical.com/en/pick-and-mix/TU-BUNDLE"
-```
+# Single pick-and-mix
+pytest tests/test_fanatical_to_html_parametrized.py -s --pretty \
+  --url "https://www.fanatical.com/en/pick-and-mix/YOUR-BUNDLE"
 
-### Todos los pick-and-mix (un HTML por bundle)
-
-Listado: `https://www.fanatical.com/en/bundle/games`
-
-```bash
-pytest tests/test_fanatical_all_bundles.py -s
+# All pick-and-mix from /en/bundle/games (one HTML each)
 pytest tests/test_fanatical_all_bundles.py -s --pretty
-```
 
-### Todos los pick-and-mix en un solo HTML
-
-```bash
+# All pick-and-mix in one HTML
 pytest tests/test_fanatical_all_bundles_combined.py -s --pretty
-pytest tests/test_fanatical_all_bundles_combined.py -s --pretty --html-output mi_combinado
 ```
 
-Salida típica: `reports/all_fanatical_pick_and_mix_combined_pretty.html`
-
----
+Output example: `reports/all_fanatical_pick_and_mix_combined_pretty.html`
 
 ## Humble Bundle
 
-Los bundles de juegos se leen desde [humblebundle.com/games](https://www.humblebundle.com/games). En el HTML verás:
-
-- Bloque superior con **cada tier**, su **precio** y los **juegos** que desbloquea
-- Columna **Tier** por fila (precio mínimo para obtener ese juego)
-- Soundtrack / cupones / etc. se omiten del scrape de Steam (sí se mencionan en el resumen del tier)
-
-### Un solo bundle
-
 ```bash
-pytest tests/test_humble_to_html_parametrized.py -s --url "https://www.humblebundle.com/games/awesome-indie-adventures"
-pytest tests/test_humble_to_html_parametrized.py -s --pretty --url "https://www.humblebundle.com/games/awesome-indie-adventures"
-```
+# Single bundle
+pytest tests/test_humble_to_html_parametrized.py -s --pretty \
+  --url "https://www.humblebundle.com/games/YOUR-BUNDLE"
 
-Si no pasas `--url`, usa un bundle de ejemplo por defecto.
-
-### Todos los bundles de /games (un HTML por bundle)
-
-```bash
-pytest tests/test_humble_all_bundles.py -s
+# All bundles from /games (one HTML each)
 pytest tests/test_humble_all_bundles.py -s --pretty
-```
 
-### Todos en un solo HTML
-
-```bash
+# All bundles in one HTML
 pytest tests/test_humble_all_bundles_combined.py -s --pretty
-pytest tests/test_humble_all_bundles_combined.py -s --pretty --html-output mi_humble_combinado
 ```
 
-Salida típica: `reports/all_humble_game_bundles_combined_pretty.html`
+Output example: `reports/all_humble_game_bundles_combined_pretty.html`
 
----
-
-## Estructura del proyecto
+## Project layout
 
 ```
 ├── config/
-├── pages/
-│   ├── fanatical_home_page.py
-│   ├── humble_bundle_page.py
-│   └── steam_game_page.py
-├── tests/
-│   ├── conftest.py
-│   ├── utils_html_report.py          # Fanatical
-│   ├── utils_humble_html_report.py   # Humble (+ tiers)
-│   ├── test_fanatical_*.py
-│   └── test_humble_*.py
-├── reports/
+├── pages/          # Fanatical, Humble, Steam page objects
+├── tests/          # pytest entrypoints + HTML builders
+├── reports/        # generated HTML (gitignored)
+├── .github/workflows/
 ├── requirements.txt
 └── pytest.ini
 ```
 
-## Datos que se extraen (Steam)
+## Steam fields
 
-- Nombre, URL, precio
-- Reviews (global y 30 días)
-- Categorías y tags (game labels)
-- Fecha de lanzamiento, editor y desarrollador
-- En modo `--pretty`: portada y detección de local / shared screen
-- **Humble**: precio de tier de desbloqueo
+Name, URL, price, reviews (overall + 30 days), categories, tags, release date, publisher, developer. Pretty mode also stores cover images and local/shared-screen detection. Humble reports add the unlock-tier price.
 
-## Notas
+## GitHub Pages
 
-- El viewport del navegador está fijado a 1400×900.
-- Si Steam oculta resultados por preferencias, el scraper intenta emparejar por **nombre** entre los títulos excluidos.
-- La generación puede tardar bastante (muchas fichas de Steam). Prueba primero con un solo bundle.
+A workflow can generate the **combined** Fanatical and/or Humble reports and publish them to GitHub Pages (landing page + both HTMLs). See [`.github/workflows/publish-reports.yml`](.github/workflows/publish-reports.yml).
 
-## Licencia
+Enable Pages in the repo: **Settings → Pages → Source: GitHub Actions**.
 
-Uso personal. Añade la licencia que prefieras (MIT, etc.) si publicas el repositorio.
+## License
+
+Use personally as you prefer. Add an explicit license file (e.g. MIT) if you publish the repository.
