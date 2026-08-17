@@ -1,0 +1,57 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Pytest / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Secretos / entorno local
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+
+# Reportes generados por los scrapers
+reports/
+*.html
+*.csv
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# Logs / temporales
+*.log
+*.tmp
+*.bak
