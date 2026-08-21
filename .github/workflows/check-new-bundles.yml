@@ -1,0 +1,73 @@
+name: Check for new bundles
+
+# Mira los listados de Fanatical y Humble. Si hay URLs nuevas, actualiza
+# data/known_bundles.json y llama al workflow de publish (Pages).
+on:
+  schedule:
+    # Cada 24 horas (06:00 UTC)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: check-new-bundles
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+      source: ${{ steps.diff.outputs.source }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+          echo "PYTHONPATH=${{ github.workspace }}" >> "$GITHUB_ENV"
+
+      - name: Compare listings with known_bundles.json
+        id: diff
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+        run: python .github/scripts/check_new_bundles.py
+
+      - name: Commit updated known_bundles.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/known_bundles.json
+          if git diff --staged --quiet; then
+            echo "No changes to known_bundles.json"
+          else
+            git commit -m "chore: update known bundle listings"
+            git push
+          fi
+
+  publish:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    uses: ./.github/workflows/publish-reports.yml
+    with:
+      source: ${{ needs.check.outputs.source }}
+      pretty: true
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

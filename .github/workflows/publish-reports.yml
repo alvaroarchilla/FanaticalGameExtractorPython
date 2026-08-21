@@ -17,9 +17,16 @@ on:
         description: Use --pretty HTML
         type: boolean
         default: true
-  # Descomenta para regenerar semanalmente (puede tardar mucho / fallar por rate-limits)
-  # schedule:
-  #   - cron: "0 6 * * 1"
+  workflow_call:
+    inputs:
+      source:
+        description: Which combined report(s) to generate
+        type: string
+        default: both
+      pretty:
+        description: Use --pretty HTML
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -51,7 +58,6 @@ jobs:
           pip install -r requirements.txt
           python -c "import playwright; print('playwright', getattr(playwright, '__version__', 'unknown'))"
           python -m playwright install --with-deps chromium
-          # Asegura imports `pages` / `tests` en la colección de pytest
           echo "PYTHONPATH=${{ github.workspace }}" >> "$GITHUB_ENV"
 
       - name: Generate Fanatical combined report
@@ -75,6 +81,25 @@ jobs:
           if [ "${{ inputs.pretty }}" = "true" ]; then PRETTY_FLAG="--pretty"; fi
           pytest tests/test_humble_all_bundles_combined.py -s $PRETTY_FLAG \
             --html-output all_humble_game_bundles_combined
+
+      # Si solo regeneramos una fuente, conservamos el HTML de la otra desde Pages
+      - name: Restore missing reports from live Pages
+        continue-on-error: true
+        env:
+          PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+        run: |
+          mkdir -p reports
+          for f in \
+            all_fanatical_pick_and_mix_combined_pretty.html \
+            all_fanatical_pick_and_mix_combined.html \
+            all_humble_game_bundles_combined_pretty.html \
+            all_humble_game_bundles_combined.html
+          do
+            if [ ! -f "reports/$f" ]; then
+              echo "Trying $PAGES_BASE/$f"
+              curl -fsSL "$PAGES_BASE/$f" -o "reports/$f" && echo "Restored $f" || echo "Skip $f"
+            fi
+          done
 
       - name: Build site folder
         run: |

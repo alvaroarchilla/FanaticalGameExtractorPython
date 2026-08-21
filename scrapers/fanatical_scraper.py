@@ -1,0 +1,1 @@
+# Lógica de scraping para Fanatical

@@ -81,6 +81,7 @@ Output example: `reports/all_humble_game_bundles_combined_pretty.html`
 ├── pages/          # Fanatical, Humble, Steam page objects
 ├── tests/          # pytest entrypoints + HTML builders
 ├── reports/        # generated HTML (gitignored)
+├── data/           # known_bundles.json (listing snapshot for the checker)
 ├── .github/workflows/
 ├── requirements.txt
 └── pytest.ini
@@ -92,9 +93,14 @@ Name, URL, price, reviews (overall + 30 days), categories, tags, release date, p
 
 ## GitHub Pages
 
-A workflow can generate the **combined** Fanatical and/or Humble reports and publish them to GitHub Pages (landing page + both HTMLs). See [`.github/workflows/publish-reports.yml`](.github/workflows/publish-reports.yml).
+Workflows:
 
-Enable Pages in the repo: **Settings → Pages → Source: GitHub Actions**.
+- [`publish-reports.yml`](.github/workflows/publish-reports.yml) — generate combined HTML and deploy to Pages (manual or called by the checker).
+- [`check-new-bundles.yml`](.github/workflows/check-new-bundles.yml) — daily (06:00 UTC), compare Fanatical/Humble listings to `data/known_bundles.json`; if there are **new** URLs, update the snapshot and publish only the affected source(s).
+
+Enable Pages: **Settings → Pages → Source: GitHub Actions**.
+
+First checker run only seeds `data/known_bundles.json` (no full scrape). Later runs publish when something new appears.
 
 ## License
 
