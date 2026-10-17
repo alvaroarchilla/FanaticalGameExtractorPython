@@ -192,6 +192,60 @@ def _bundle_store_label(url: str) -> str:
     return "Bundle"
 
 
+def _bundle_list(game_data: dict) -> list[dict]:
+    """Lista de bundles asociados al juego (puede haber varios si se fusionó)."""
+    bundles = list(game_data.get("bundle_links") or [])
+    if not bundles:
+        b_url = (game_data.get("bundle_url") or "").strip()
+        if b_url:
+            bundles = [{
+                "url": b_url,
+                "name": game_data.get("bundle_name") or _bundle_label_from_url(b_url),
+            }]
+    return bundles
+
+
+def _bundle_names(game_data: dict) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for b in _bundle_list(game_data):
+        name = (b.get("name") or "").strip() or _bundle_label_from_url(b.get("url") or "")
+        name = name.replace("|", "/").strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _bundles_data_attr(game_data: dict) -> str:
+    return html.escape("|".join(_bundle_names(game_data)))
+
+
+def _bundle_cell(game_data: dict, pretty: bool) -> str:
+    """Celda Bundle: nombre(s) con enlace al listado de origen."""
+    parts: list[str] = []
+    for b in _bundle_list(game_data):
+        b_url = (b.get("url") or "").strip()
+        b_name = (b.get("name") or "").strip() or _bundle_label_from_url(b_url)
+        if not b_name:
+            continue
+        safe_name = html.escape(b_name)
+        if b_url:
+            safe_b = html.escape(b_url)
+            if pretty:
+                parts.append(
+                    f'<a class="bundle-name-link" href="{safe_b}" target="_blank" '
+                    f'title="{safe_b}">{safe_name}</a>'
+                )
+            else:
+                parts.append(f'<a href="{safe_b}" target="_blank">{safe_name}</a>')
+        else:
+            parts.append(safe_name)
+    if not parts:
+        return "N/A"
+    return f'<div class="bundle-cell">{"<br>".join(parts)}</div>'
+
+
 def _url_cell(game_data: dict, pretty: bool) -> str:
     """Celda Links: Steam (+ bundle Fanatical/Humble si viene en game_data)."""
     url = game_data.get("url") or "#"
@@ -205,14 +259,7 @@ def _url_cell(game_data: dict, pretty: bool) -> str:
     else:
         parts.append(f'<a href="{safe_steam}" target="_blank">{safe_steam}</a>')
 
-    bundles = game_data.get("bundle_links") or []
-    if not bundles:
-        b_url = (game_data.get("bundle_url") or "").strip()
-        if b_url:
-            bundles = [{
-                "url": b_url,
-                "name": game_data.get("bundle_name") or _bundle_label_from_url(b_url),
-            }]
+    bundles = _bundle_list(game_data)
 
     for b in bundles:
         b_url = (b.get("url") or "").strip()
@@ -258,11 +305,14 @@ def _build_row(game_data: dict, pretty: bool = False) -> str:
     local = pretty and is_local_shared_screen(game_data)
     row_cls = ' class="row-local-mp"' if local else ""
     local_order = "1" if local else "0"
+    bundles_attr = _bundles_data_attr(game_data)
+    bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
 
     return f"""
-    <tr{row_cls} data-local-mp="{local_order}">
+    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
         <td class="col-name" data-order="{html.escape(str(game_data.get('game_name') or ''))}">{_game_name_cell(game_data, pretty)}</td>
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
+        <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
         <td class="col-price">{_sanitize(game_data.get("price"))}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
         <td class="col-cats">{_sanitize(game_data.get("categories"))}</td>
@@ -287,6 +337,13 @@ def _classic_css() -> str:
         .tier-row { margin-top: 8px; }
         .tier-item { white-space: nowrap; }
         .links-cell { line-height: 1.5; }
+        .bundle-cell { line-height: 1.45; }
+        .table-toolbar {
+            display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+            margin: 0 0 14px;
+        }
+        .table-toolbar label { font-weight: 600; }
+        .table-toolbar select { margin-left: 6px; padding: 4px 8px; min-width: 220px; }
     """
 
 
@@ -347,7 +404,7 @@ def _pretty_css() -> str:
         table.dataTable tbody td:first-child {
             border-left: 1px solid #2a3644 !important; border-radius: 10px 0 0 10px;
         }
-        table.dataTable tbody td:nth-child(9) {
+        table.dataTable tbody td:nth-child(10) {
             border-right: 1px solid #2a3644 !important; border-radius: 0 10px 10px 0;
         }
         table.dataTable tbody tr:nth-child(even) td { background: var(--row-alt); }
@@ -361,18 +418,36 @@ def _pretty_css() -> str:
         table.dataTable tbody tr.row-local-mp td:first-child {
             border-left: 3px solid var(--gold) !important;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(9) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(10) {
             border-right: 3px solid var(--gold) !important;
         }
 
-        .col-name { width: 26%; }
-        .col-url { width: 9%; text-align: center; }
-        .col-price { width: 7%; white-space: nowrap; }
-        .col-reviews { width: 11%; }
-        .col-cats { width: 15%; word-break: break-word; line-height: 1.35; }
-        .col-labels { width: 13%; word-break: break-word; line-height: 1.35; }
-        .col-date { width: 8%; white-space: nowrap; }
-        .col-editor, .col-dev { width: 7%; word-break: break-word; }
+        .col-name { width: 22%; }
+        .col-url { width: 8%; text-align: center; }
+        .col-bundle { width: 12%; word-break: break-word; line-height: 1.35; font-size: 0.88rem; }
+        .col-price { width: 6%; white-space: nowrap; }
+        .col-reviews { width: 10%; }
+        .col-cats { width: 13%; word-break: break-word; line-height: 1.35; }
+        .col-labels { width: 11%; word-break: break-word; line-height: 1.35; }
+        .col-date { width: 7%; white-space: nowrap; }
+        .col-editor, .col-dev { width: 6%; word-break: break-word; }
+
+        .table-toolbar {
+            display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+            margin: 0 0 16px; color: var(--muted); font-size: 0.95rem;
+        }
+        .table-toolbar label { color: var(--text); font-weight: 600; }
+        .table-toolbar select {
+            margin-left: 8px; min-width: 260px; max-width: min(480px, 100%);
+            background: var(--panel); color: var(--text); border: 1px solid #2a3644;
+            border-radius: 6px; padding: 6px 10px;
+        }
+        .bundle-cell { line-height: 1.4; }
+        .bundle-name-link {
+            color: var(--text) !important; text-decoration: none;
+            border-bottom: 1px dotted #4a5a6a;
+        }
+        .bundle-name-link:hover { color: var(--accent) !important; border-bottom-color: var(--accent); }
 
         .links-cell {
             display: flex; flex-direction: column; gap: 6px; align-items: center;
@@ -457,6 +532,51 @@ def _legend_html(pretty: bool) -> str:
     )
 
 
+def _bundle_filter_toolbar_html() -> str:
+    return (
+        '<div class="table-toolbar">'
+        '<label for="bundleFilter">Filtrar por bundle'
+        '<select id="bundleFilter">'
+        '<option value="">Todos los bundles</option>'
+        "</select>"
+        "</label>"
+        "</div>"
+    )
+
+
+def _datatable_init_js(dt_opts: str) -> str:
+    """Init DataTables + desplegable de filtro por bundle (data-bundles en cada fila)."""
+    return f"""
+    $(document).ready(function() {{
+        var table = $('#gamesTable').DataTable({{{dt_opts}}});
+        var names = {{}};
+        table.rows().every(function() {{
+            var attr = this.node().getAttribute('data-bundles') || '';
+            attr.split('|').forEach(function(n) {{
+                n = (n || '').trim();
+                if (n) names[n] = true;
+            }});
+        }});
+        var $sel = $('#bundleFilter');
+        Object.keys(names).sort(function(a, b) {{
+            return a.localeCompare(b, 'es', {{ sensitivity: 'base' }});
+        }}).forEach(function(n) {{
+            $sel.append($('<option></option>').val(n).text(n));
+        }});
+        $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {{
+            if (settings.nTable.id !== 'gamesTable') return true;
+            var selected = $sel.val();
+            if (!selected) return true;
+            var node = table.row(dataIndex).node();
+            if (!node) return true;
+            var bundles = (node.getAttribute('data-bundles') || '').split('|');
+            return bundles.indexOf(selected) !== -1;
+        }});
+        $sel.on('change', function() {{ table.draw(); }});
+    }});
+"""
+
+
 def _html_shell(
     page_title: str,
     start_url: str,
@@ -468,8 +588,8 @@ def _html_shell(
     if pretty:
         dt_opts = """
             pageLength: 25,
-            order: [[9, 'desc'], [6, 'desc']],
-            columnDefs: [{ targets: 9, visible: false, searchable: false }],
+            order: [[10, 'desc'], [7, 'desc']],
+            columnDefs: [{ targets: 10, visible: false, searchable: false }],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = """
@@ -485,7 +605,7 @@ def _html_shell(
     else:
         dt_opts = """
             pageLength: 25,
-            order: [[6, 'desc']],
+            order: [[7, 'desc']],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = ""
@@ -502,11 +622,13 @@ def _html_shell(
     <h1><a href="{html.escape(start_url)}" target="_blank">{html.escape(page_title)}</a></h1>
     {_legend_html(pretty)}
     {_tiers_html(tiers_info, pretty=pretty)}
+    {_bundle_filter_toolbar_html()}
     <table id="gamesTable" class="display">
         <thead>
             <tr>
                 <th>Game Name</th>
                 <th>{url_th}</th>
+                <th>Bundle</th>
                 <th>Price</th>
                 <th>Reviews</th>
                 <th>Categories</th>
@@ -526,9 +648,7 @@ def _html_shell(
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script>
-    $(document).ready(function() {{
-        $('#gamesTable').DataTable({{{dt_opts}}});
-    }});
+    {_datatable_init_js(dt_opts)}
     </script>
 </body>
 </html>

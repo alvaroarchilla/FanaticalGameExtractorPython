@@ -83,6 +83,9 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
         _sanitize_reviews,
         _game_name_cell,
         _url_cell,
+        _bundle_cell,
+        _bundles_data_attr,
+        _bundle_names,
     )
 
     iso_date = fecha_a_iso(game_data.get("release_date", ""))
@@ -94,11 +97,14 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
     local_order = "1" if local else "0"
     tier = _sanitize(game_data.get("humble_tier") or "N/A")
     tier_order = re.sub(r"[^\d.]", "", str(game_data.get("humble_tier") or "")) or "0"
+    bundles_attr = _bundles_data_attr(game_data)
+    bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
 
     return f"""
-    <tr{row_cls} data-local-mp="{local_order}">
+    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
         <td class="col-name" data-order="{html.escape(str(game_data.get('game_name') or ''))}">{_game_name_cell(game_data, pretty)}</td>
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
+        <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
         <td class="col-tier" data-order="{html.escape(tier_order)}">{tier}</td>
         <td class="col-price">{_sanitize(game_data.get("price"))}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
@@ -119,23 +125,29 @@ def _html_shell_humble(
     pretty: bool,
 ) -> tuple[str, str]:
     """Shell HTML con columna Tier; reutiliza CSS pretty/classic del reporte Fanatical."""
-    from tests.utils_html_report import _pretty_css, _classic_css, _legend_html
+    from tests.utils_html_report import (
+        _pretty_css,
+        _classic_css,
+        _legend_html,
+        _bundle_filter_toolbar_html,
+        _datatable_init_js,
+    )
 
     css = _pretty_css() if pretty else _classic_css()
-    # Ajustes de ancho para columna Tier
+    # Ajustes de ancho para columna Tier (+ Bundle); última visible = Developer (11)
     css += """
-        .col-tier { width: 8%; white-space: nowrap; font-weight: 600; }
+        .col-tier { width: 7%; white-space: nowrap; font-weight: 600; }
         .tier-skipped { color: #9aa8b5; font-size: 0.85em; }
-        table.dataTable tbody td:nth-child(10) {
+        table.dataTable tbody td:nth-child(11) {
             border-right: 1px solid #2a3644 !important; border-radius: 0 10px 10px 0;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(10) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(11) {
             border-right: 3px solid var(--gold) !important;
         }
-        table.dataTable tbody td:nth-child(9) {
+        table.dataTable tbody td:nth-child(10) {
             border-right: none !important; border-radius: 0;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(9) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(10) {
             border-right-color: #2a3644 !important; border-right-width: 1px !important;
         }
     """
@@ -145,8 +157,8 @@ def _html_shell_humble(
     if pretty:
         dt_opts = """
             pageLength: 25,
-            order: [[10, 'desc'], [2, 'asc'], [7, 'desc']],
-            columnDefs: [{ targets: 10, visible: false, searchable: false }],
+            order: [[11, 'desc'], [3, 'asc'], [8, 'desc']],
+            columnDefs: [{ targets: 11, visible: false, searchable: false }],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = """
@@ -162,7 +174,7 @@ def _html_shell_humble(
     else:
         dt_opts = """
             pageLength: 25,
-            order: [[2, 'asc'], [7, 'desc']],
+            order: [[3, 'asc'], [8, 'desc']],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = ""
@@ -179,11 +191,13 @@ def _html_shell_humble(
     <h1><a href="{html.escape(start_url)}" target="_blank">{html.escape(page_title)}</a></h1>
     {_legend_html(pretty)}
     {tiers_block}
+    {_bundle_filter_toolbar_html()}
     <table id="gamesTable" class="display">
         <thead>
             <tr>
                 <th>Game Name</th>
                 <th>Links</th>
+                <th>Bundle</th>
                 <th>Tier</th>
                 <th>Price</th>
                 <th>Reviews</th>
@@ -204,15 +218,12 @@ def _html_shell_humble(
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script>
-    $(document).ready(function() {{
-        $('#gamesTable').DataTable({{{dt_opts}}});
-    }});
+    {_datatable_init_js(dt_opts)}
     </script>
 </body>
 </html>
 """
     return head, tail
-
 
 def _write_humble_report(
     page_title: str,
