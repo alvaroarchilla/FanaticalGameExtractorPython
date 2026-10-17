@@ -50,6 +50,114 @@ def _sanitize(value: str) -> str:
     return html.escape(str(value).strip().replace("\n", "; "))
 
 
+def _money_value(text: str) -> float:
+    """Convierte '5,99€' / '€12' / 'Free' a float. Sin precio usable → infinito."""
+    s = (text or "").strip().lower()
+    if not s or s in {"n/a", "na", "-"}:
+        return 1e12
+    if "free" in s or "gratis" in s:
+        return 0.0
+    m = re.search(r"(\d[\d.,]*)", s)
+    if not m:
+        return 1e12
+    num = m.group(1)
+    if "," in num and "." in num:
+        if num.rfind(",") > num.rfind("."):
+            num = num.replace(".", "").replace(",", ".")
+        else:
+            num = num.replace(",", "")
+    elif "," in num:
+        parts = num.split(",")
+        if len(parts[-1]) == 3:
+            num = num.replace(",", "")
+        else:
+            num = num.replace(",", ".")
+    try:
+        return float(num)
+    except ValueError:
+        return 1e12
+
+
+def _fanatical_deal_from_tiers(tiers_info: dict | None) -> tuple[str, str] | None:
+    """Tier Fanatical más barato: ('5,99€', '3 juegos')."""
+    if not tiers_info:
+        return None
+    best = None
+    best_v = 1e12
+    for t in tiers_info.get("tiers") or []:
+        price = (t.get("price") or "").strip()
+        v = _money_value(price)
+        if price and v < best_v:
+            best_v = v
+            best = t
+    if not best:
+        return None
+    qty = (best.get("quantity") or "").strip()
+    m = re.search(r"\d+", qty)
+    detail = f"{m.group(0)} juegos" if m else qty
+    return (best.get("price") or "").strip(), detail
+
+
+def _upsert_store_deal(
+    game_data: dict,
+    store: str,
+    price: str,
+    detail: str = "",
+) -> None:
+    """Guarda el precio de tienda más barato (Fanatical o Humble) del juego."""
+    price = (price or "").strip()
+    if not price or not store:
+        return
+    deals = game_data.setdefault("store_deals", [])
+    new_v = _money_value(price)
+    for d in deals:
+        if d.get("store") == store:
+            if new_v < _money_value(d.get("price") or ""):
+                d["price"] = price
+                d["detail"] = detail or ""
+            return
+    deals.append({"store": store, "price": price, "detail": detail or ""})
+
+
+_STORE_PRICE_ORDER = {"Fanatical": 0, "Humble": 1}
+
+
+def _price_cell(game_data: dict) -> str:
+    """Steam + precio Fanatical (tier) y/o Humble (tier de desbloqueo)."""
+    steam = _sanitize(game_data.get("price"))
+    lines = [
+        f'<div class="price-line">'
+        f'<span class="price-tag price-tag--steam">Steam</span> {steam}'
+        f"</div>"
+    ]
+    deals = sorted(
+        game_data.get("store_deals") or [],
+        key=lambda d: _STORE_PRICE_ORDER.get(d.get("store") or "", 9),
+    )
+    for d in deals:
+        store = (d.get("store") or "").strip()
+        price = (d.get("price") or "").strip()
+        if not store or not price:
+            continue
+        slug = "fanatical" if store == "Fanatical" else "humble" if store == "Humble" else "other"
+        detail = (d.get("detail") or "").strip()
+        extra = (
+            f' <span class="price-detail">({html.escape(detail)})</span>' if detail else ""
+        )
+        lines.append(
+            f'<div class="price-line">'
+            f'<span class="price-tag price-tag--{slug}">{html.escape(store)}</span> '
+            f"{html.escape(price)}{extra}"
+            f"</div>"
+        )
+    return f'<div class="price-stack">{"".join(lines)}</div>'
+
+
+def _apply_fanatical_deal(game_data: dict, tiers_info: dict | None) -> None:
+    deal = _fanatical_deal_from_tiers(tiers_info)
+    if deal:
+        _upsert_store_deal(game_data, "Fanatical", deal[0], deal[1])
+
 def _parse_review_count(token: str) -> int:
     """'1,211' / '1.211' / '1211' -> int."""
     digits = re.sub(r"[^\d]", "", token or "")
@@ -307,13 +415,14 @@ def _build_row(game_data: dict, pretty: bool = False) -> str:
     local_order = "1" if local else "0"
     bundles_attr = _bundles_data_attr(game_data)
     bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
+    price_order = f"{_money_value(str(game_data.get('price') or '')):.4f}"
 
     return f"""
     <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
         <td class="col-name" data-order="{html.escape(str(game_data.get('game_name') or ''))}">{_game_name_cell(game_data, pretty)}</td>
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
         <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
-        <td class="col-price">{_sanitize(game_data.get("price"))}</td>
+        <td class="col-price" data-order="{price_order}">{_price_cell(game_data)}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
         <td class="col-cats">{_sanitize(game_data.get("categories"))}</td>
         <td class="col-labels">{_sanitize(game_data.get("game_label"))}</td>
@@ -338,6 +447,9 @@ def _classic_css() -> str:
         .tier-item { white-space: nowrap; }
         .links-cell { line-height: 1.5; }
         .bundle-cell { line-height: 1.45; }
+        .price-stack { line-height: 1.45; }
+        .price-tag { font-weight: 700; margin-right: 4px; }
+        .price-detail { color: #666; }
         .table-toolbar {
             display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
             margin: 0 0 14px;
@@ -422,10 +534,20 @@ def _pretty_css() -> str:
             border-right: 3px solid var(--gold) !important;
         }
 
-        .col-name { width: 22%; }
+        .col-name { width: 20%; }
         .col-url { width: 8%; text-align: center; }
-        .col-bundle { width: 12%; word-break: break-word; line-height: 1.35; font-size: 0.88rem; }
-        .col-price { width: 6%; white-space: nowrap; }
+        .col-bundle { width: 11%; word-break: break-word; line-height: 1.35; font-size: 0.88rem; }
+        .col-price { width: 13%; white-space: normal; }
+        .price-stack { display: flex; flex-direction: column; gap: 3px; }
+        .price-line { font-size: 0.82rem; line-height: 1.3; white-space: nowrap; }
+        .price-tag {
+            display: inline-block; min-width: 4.4rem; font-size: 0.68rem; font-weight: 700;
+            letter-spacing: 0.03em; text-transform: uppercase; margin-right: 4px;
+        }
+        .price-tag--steam { color: var(--accent); }
+        .price-tag--fanatical { color: #f0c14b; }
+        .price-tag--humble { color: #6fcf97; }
+        .price-detail { color: var(--muted); font-size: 0.75rem; }
         .col-reviews { width: 10%; }
         .col-cats { width: 13%; word-break: break-word; line-height: 1.35; }
         .col-labels { width: 11%; word-break: break-word; line-height: 1.35; }
@@ -724,6 +846,7 @@ def extraer_juegos_desde_bundle(
                 )
                 if data:
                     _attach_bundle_link(data, start_url, b_name)
+                    _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "search":
                 print(f"[Steam] [{i+1}/{len(jobs)}] Busqueda por nombre: {job['title']}")
@@ -732,6 +855,7 @@ def extraer_juegos_desde_bundle(
                 )
                 if data:
                     _attach_bundle_link(data, start_url, b_name)
+                    _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "bundle":
                 print(
@@ -748,6 +872,7 @@ def extraer_juegos_desde_bundle(
                             f"{data['game_name']} *bundled with {bundle_anchor}"
                         )
                         _attach_bundle_link(data, start_url, b_name)
+                        _apply_fanatical_deal(data, tiers_info)
                         games.append(data)
         except Exception as e:
             print(f"[Steam] Error en trabajo {i} ({job.get('title')}): {e}")
@@ -852,6 +977,13 @@ def generar_html_combinado_desde_urls(
                             merged[key],
                             b.get("url") or url,
                             b.get("name"),
+                        )
+                    for d in g.get("store_deals") or []:
+                        _upsert_store_deal(
+                            merged[key],
+                            d.get("store") or "",
+                            d.get("price") or "",
+                            d.get("detail") or "",
                         )
             print(f"Bundle combinado #{i}: +{len(games)} juegos")
         except Exception as e:

@@ -13,6 +13,7 @@ from tests.utils_html_report import (
     _attach_bundle_link,
     _game_merge_key,
     _sanitize,
+    _upsert_store_deal,
     is_local_shared_screen,
 )
 
@@ -86,6 +87,8 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
         _bundle_cell,
         _bundles_data_attr,
         _bundle_names,
+        _price_cell,
+        _money_value,
     )
 
     iso_date = fecha_a_iso(game_data.get("release_date", ""))
@@ -99,6 +102,7 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
     tier_order = re.sub(r"[^\d.]", "", str(game_data.get("humble_tier") or "")) or "0"
     bundles_attr = _bundles_data_attr(game_data)
     bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
+    price_order = f"{_money_value(str(game_data.get('price') or '')):.4f}"
 
     return f"""
     <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
@@ -106,7 +110,7 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
         <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
         <td class="col-tier" data-order="{html.escape(tier_order)}">{tier}</td>
-        <td class="col-price">{_sanitize(game_data.get("price"))}</td>
+        <td class="col-price" data-order="{price_order}">{_price_cell(game_data)}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
         <td class="col-cats">{_sanitize(game_data.get("categories"))}</td>
         <td class="col-labels">{_sanitize(game_data.get("game_label"))}</td>
@@ -297,6 +301,7 @@ def extraer_juegos_desde_humble(
                 }
             data["humble_tier"] = it.get("tier_price") or ""
             data["humble_tier_label"] = it.get("tier_label") or ""
+            _upsert_store_deal(data, "Humble", data["humble_tier"])
             # Preferir portada Humble (más clara) y Steam como fallback
             if pretty and it.get("image"):
                 steam_img = (data.get("header_image") or "").strip()
@@ -385,6 +390,13 @@ def generar_html_humble_combinado(
                     for b in g.get("bundle_links") or []:
                         _attach_bundle_link(
                             merged[key], b.get("url") or url, b.get("name")
+                        )
+                    for d in g.get("store_deals") or []:
+                        _upsert_store_deal(
+                            merged[key],
+                            d.get("store") or "",
+                            d.get("price") or "",
+                            d.get("detail") or "",
                         )
                     # Conservar el tier más barato si hay varios
                     old = merged[key].get("humble_tier") or ""
