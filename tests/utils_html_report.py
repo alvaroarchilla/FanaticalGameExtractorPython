@@ -313,20 +313,44 @@ def _bundle_list(game_data: dict) -> list[dict]:
     return bundles
 
 
-def _bundle_names(game_data: dict) -> list[str]:
-    names: list[str] = []
+def _bundle_entries(game_data: dict) -> list[tuple[str, str, str]]:
+    """(nombre, fecha visible, fecha ISO) sin duplicar el mismo bundle."""
+    entries: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for b in _bundle_list(game_data):
         name = (b.get("name") or "").strip() or _bundle_label_from_url(b.get("url") or "")
         name = name.replace("|", "/").strip()
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        entries.append((
+            name,
+            (b.get("ends_at") or "").replace("|", "/").strip(),
+            (b.get("ends_at_iso") or "").strip(),
+        ))
+    return entries
+
+
+def _bundle_names(game_data: dict) -> list[str]:
+    return [name for name, _until, _iso in _bundle_entries(game_data)]
+
+
+def _until_cell(game_data: dict) -> tuple[str, str]:
+    """HTML de la columna y valor ISO más próximo para ordenar."""
+    labels = [until for _name, until, _iso in _bundle_entries(game_data) if until]
+    isos = [iso for _name, until, iso in _bundle_entries(game_data) if until and iso]
+    if not labels:
+        return "N/A", "9999-99-99"
+    cell = "<br>".join(html.escape(label) for label in labels)
+    return cell, min(isos) if isos else "9999-99-99"
 
 
 def _bundles_data_attr(game_data: dict) -> str:
     return html.escape("|".join(_bundle_names(game_data)))
+
+
+def _untils_data_attr(game_data: dict) -> str:
+    return html.escape("|".join(until for _name, until, _iso in _bundle_entries(game_data)))
 
 
 def _bundle_cell(game_data: dict, pretty: bool) -> str:
@@ -414,14 +438,17 @@ def _build_row(game_data: dict, pretty: bool = False) -> str:
     row_cls = ' class="row-local-mp"' if local else ""
     local_order = "1" if local else "0"
     bundles_attr = _bundles_data_attr(game_data)
+    untils_attr = _untils_data_attr(game_data)
     bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
+    until_html, until_order = _until_cell(game_data)
     price_order = f"{_money_value(str(game_data.get('price') or '')):.4f}"
 
     return f"""
-    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
+    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}" data-untils="{untils_attr}">
         <td class="col-name" data-order="{html.escape(str(game_data.get('game_name') or ''))}">{_game_name_cell(game_data, pretty)}</td>
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
         <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
+        <td class="col-until" data-order="{html.escape(until_order)}">{until_html}</td>
         <td class="col-price" data-order="{price_order}">{_price_cell(game_data)}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
         <td class="col-cats">{_sanitize(game_data.get("categories"))}</td>
@@ -516,7 +543,7 @@ def _pretty_css() -> str:
         table.dataTable tbody td:first-child {
             border-left: 1px solid #2a3644 !important; border-radius: 10px 0 0 10px;
         }
-        table.dataTable tbody td:nth-child(10) {
+        table.dataTable tbody td:nth-child(11) {
             border-right: 1px solid #2a3644 !important; border-radius: 0 10px 10px 0;
         }
         table.dataTable tbody tr:nth-child(even) td { background: var(--row-alt); }
@@ -530,13 +557,14 @@ def _pretty_css() -> str:
         table.dataTable tbody tr.row-local-mp td:first-child {
             border-left: 3px solid var(--gold) !important;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(10) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(11) {
             border-right: 3px solid var(--gold) !important;
         }
 
         .col-name { width: 20%; }
         .col-url { width: 8%; text-align: center; }
         .col-bundle { width: 11%; word-break: break-word; line-height: 1.35; font-size: 0.88rem; }
+        .col-until { width: 8%; white-space: nowrap; font-size: 0.85rem; }
         .col-price { width: 13%; white-space: normal; }
         .price-stack { display: flex; flex-direction: column; gap: 3px; }
         .price-line { font-size: 0.82rem; line-height: 1.3; white-space: nowrap; }
@@ -671,19 +699,23 @@ def _datatable_init_js(dt_opts: str) -> str:
     return f"""
     $(document).ready(function() {{
         var table = $('#gamesTable').DataTable({{{dt_opts}}});
-        var names = {{}};
+        var labels = {{}};
         table.rows().every(function() {{
-            var attr = this.node().getAttribute('data-bundles') || '';
-            attr.split('|').forEach(function(n) {{
+            var node = this.node();
+            var names = (node.getAttribute('data-bundles') || '').split('|');
+            var untils = (node.getAttribute('data-untils') || '').split('|');
+            names.forEach(function(n, i) {{
                 n = (n || '').trim();
-                if (n) names[n] = true;
+                if (!n || labels[n]) return;
+                var until = (untils[i] || '').trim();
+                labels[n] = until ? (n + ' (hasta ' + until + ')') : n;
             }});
         }});
         var $sel = $('#bundleFilter');
-        Object.keys(names).sort(function(a, b) {{
+        Object.keys(labels).sort(function(a, b) {{
             return a.localeCompare(b, 'es', {{ sensitivity: 'base' }});
         }}).forEach(function(n) {{
-            $sel.append($('<option></option>').val(n).text(n));
+            $sel.append($('<option></option>').val(n).text(labels[n]));
         }});
         $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {{
             if (settings.nTable.id !== 'gamesTable') return true;
@@ -710,8 +742,8 @@ def _html_shell(
     if pretty:
         dt_opts = """
             pageLength: 25,
-            order: [[10, 'desc'], [7, 'desc']],
-            columnDefs: [{ targets: 10, visible: false, searchable: false }],
+            order: [[11, 'desc'], [8, 'desc']],
+            columnDefs: [{ targets: 11, visible: false, searchable: false }],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = """
@@ -727,7 +759,7 @@ def _html_shell(
     else:
         dt_opts = """
             pageLength: 25,
-            order: [[7, 'desc']],
+            order: [[8, 'desc']],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = ""
@@ -751,6 +783,7 @@ def _html_shell(
                 <th>Game Name</th>
                 <th>{url_th}</th>
                 <th>Bundle</th>
+                <th>Activo hasta</th>
                 <th>Price</th>
                 <th>Reviews</th>
                 <th>Categories</th>
@@ -802,12 +835,71 @@ def _game_merge_key(game_data: dict) -> str:
     return f"name:{name}" if name else f"id:{id(game_data)}"
 
 
-def _attach_bundle_link(game_data: dict, bundle_url: str, bundle_name: str | None = None) -> None:
+def format_offer_until(raw: str) -> tuple[str, str]:
+    """ISO de la tienda → ('DD/MM/YYYY', 'YYYY-MM-DD')."""
+    from datetime import datetime, timezone
+
+    text = (raw or "").strip()
+    if not text:
+        return "", ""
+    try:
+        if text.endswith("Z"):
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%d/%m/%Y"), dt.strftime("%Y-%m-%d")
+    except Exception:
+        return "", ""
+
+
+def _fanatical_offer_until(page: Page) -> tuple[str, str]:
+    """Fecha hasta la que se puede comprar el pick-and-mix (API valid_until)."""
+    m = re.search(r"/pick-and-mix/([^/?#]+)", page.url or "")
+    if not m:
+        return "", ""
+    api = f"https://www.fanatical.com/api/pick-and-mix/{m.group(1)}/en"
+    try:
+        resp = page.request.get(api, timeout=20000)
+        if not resp.ok:
+            print(f"[Fanatical] valid_until HTTP {resp.status}")
+            return "", ""
+        raw = str((resp.json() or {}).get("valid_until") or "")
+        display, iso = format_offer_until(raw)
+        print(f"[Fanatical] Activo hasta {display or 'N/A'}")
+        return display, iso
+    except Exception as e:
+        print(f"[Fanatical] No se pudo leer valid_until: {e}")
+        return "", ""
+
+
+def _attach_bundle_link(
+    game_data: dict,
+    bundle_url: str,
+    bundle_name: str | None = None,
+    ends_at: str = "",
+    ends_at_iso: str = "",
+) -> None:
     name = (bundle_name or "").strip() or _bundle_label_from_url(bundle_url)
-    link = {"url": bundle_url, "name": name}
+    ends_at = (ends_at or "").strip()
+    ends_at_iso = (ends_at_iso or "").strip()
     existing = game_data.setdefault("bundle_links", [])
-    if not any((b.get("url") or "").rstrip("/") == bundle_url.rstrip("/") for b in existing):
-        existing.append(link)
+    found = next(
+        (b for b in existing if (b.get("url") or "").rstrip("/") == bundle_url.rstrip("/")),
+        None,
+    )
+    if found is None:
+        existing.append({
+            "url": bundle_url,
+            "name": name,
+            "ends_at": ends_at,
+            "ends_at_iso": ends_at_iso,
+        })
+    elif ends_at and not found.get("ends_at"):
+        found["ends_at"] = ends_at
+        found["ends_at_iso"] = ends_at_iso
     game_data["bundle_url"] = bundle_url
     game_data["bundle_name"] = name
 
@@ -831,6 +923,7 @@ def extraer_juegos_desde_bundle(
     home_page.handle_popups()
 
     tiers_info = home_page.get_bundle_tiers()
+    ends_at, ends_iso = _fanatical_offer_until(page)
     jobs = home_page.collect_jobs()
     print(f"Trabajos a procesar en Steam: {len(jobs)}" + (" [pretty]" if pretty else ""))
 
@@ -845,7 +938,7 @@ def extraer_juegos_desde_bundle(
                     job["steam_url"], game_name=job["title"], include_image=pretty
                 )
                 if data:
-                    _attach_bundle_link(data, start_url, b_name)
+                    _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
                     _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "search":
@@ -854,7 +947,7 @@ def extraer_juegos_desde_bundle(
                     job["title"], include_image=pretty
                 )
                 if data:
-                    _attach_bundle_link(data, start_url, b_name)
+                    _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
                     _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "bundle":
@@ -871,7 +964,7 @@ def extraer_juegos_desde_bundle(
                         data["game_name"] = (
                             f"{data['game_name']} *bundled with {bundle_anchor}"
                         )
-                        _attach_bundle_link(data, start_url, b_name)
+                        _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
                         _apply_fanatical_deal(data, tiers_info)
                         games.append(data)
         except Exception as e:
@@ -977,6 +1070,8 @@ def generar_html_combinado_desde_urls(
                             merged[key],
                             b.get("url") or url,
                             b.get("name"),
+                            b.get("ends_at") or "",
+                            b.get("ends_at_iso") or "",
                         )
                     for d in g.get("store_deals") or []:
                         _upsert_store_deal(

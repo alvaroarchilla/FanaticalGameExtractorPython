@@ -13,9 +13,29 @@ from tests.utils_html_report import (
     _attach_bundle_link,
     _game_merge_key,
     _sanitize,
+    _until_cell,
+    _untils_data_attr,
     _upsert_store_deal,
+    format_offer_until,
     is_local_shared_screen,
 )
+
+
+def _humble_offer_until(page: Page, start_url: str) -> tuple[str, str]:
+    """Fecha hasta la que se puede comprar el bundle (end_time del HTML)."""
+    try:
+        resp = page.request.get(start_url, timeout=30000)
+        body = resp.text() if resp.ok else ""
+    except Exception as e:
+        print(f"[Humble] No se pudo leer la fecha de fin: {e}")
+        return "", ""
+    match = re.search(r'"end_time\|datetime":\s*"([^"]+)"', body or "")
+    if not match:
+        print("[Humble] Sin end_time")
+        return "", ""
+    display, iso = format_offer_until(match.group(1))
+    print(f"[Humble] Activo hasta {display or 'N/A'}")
+    return display, iso
 
 
 def _tiers_html_humble(tiers_info: dict | None, pretty: bool = False) -> str:
@@ -89,6 +109,8 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
         _bundle_names,
         _price_cell,
         _money_value,
+        _until_cell,
+        _untils_data_attr,
     )
 
     iso_date = fecha_a_iso(game_data.get("release_date", ""))
@@ -101,14 +123,17 @@ def _build_row_humble(game_data: dict, pretty: bool = False) -> str:
     tier = _sanitize(game_data.get("humble_tier") or "N/A")
     tier_order = re.sub(r"[^\d.]", "", str(game_data.get("humble_tier") or "")) or "0"
     bundles_attr = _bundles_data_attr(game_data)
+    untils_attr = _untils_data_attr(game_data)
     bundle_order = html.escape(" | ".join(_bundle_names(game_data)))
+    until_html, until_order = _until_cell(game_data)
     price_order = f"{_money_value(str(game_data.get('price') or '')):.4f}"
 
     return f"""
-    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}">
+    <tr{row_cls} data-local-mp="{local_order}" data-bundles="{bundles_attr}" data-untils="{untils_attr}">
         <td class="col-name" data-order="{html.escape(str(game_data.get('game_name') or ''))}">{_game_name_cell(game_data, pretty)}</td>
         <td class="col-url">{_url_cell(game_data, pretty)}</td>
         <td class="col-bundle" data-order="{bundle_order}">{_bundle_cell(game_data, pretty)}</td>
+        <td class="col-until" data-order="{html.escape(until_order)}">{until_html}</td>
         <td class="col-tier" data-order="{html.escape(tier_order)}">{tier}</td>
         <td class="col-price" data-order="{price_order}">{_price_cell(game_data)}</td>
         <td data-order="{reviews_order}" class="reviews-cell col-reviews">{_sanitize_reviews(reviews_raw)}</td>
@@ -142,16 +167,16 @@ def _html_shell_humble(
     css += """
         .col-tier { width: 7%; white-space: nowrap; font-weight: 600; }
         .tier-skipped { color: #9aa8b5; font-size: 0.85em; }
-        table.dataTable tbody td:nth-child(11) {
+        table.dataTable tbody td:nth-child(12) {
             border-right: 1px solid #2a3644 !important; border-radius: 0 10px 10px 0;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(11) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(12) {
             border-right: 3px solid var(--gold) !important;
         }
-        table.dataTable tbody td:nth-child(10) {
+        table.dataTable tbody td:nth-child(11) {
             border-right: none !important; border-radius: 0;
         }
-        table.dataTable tbody tr.row-local-mp td:nth-child(10) {
+        table.dataTable tbody tr.row-local-mp td:nth-child(11) {
             border-right-color: #2a3644 !important; border-right-width: 1px !important;
         }
     """
@@ -161,8 +186,8 @@ def _html_shell_humble(
     if pretty:
         dt_opts = """
             pageLength: 25,
-            order: [[11, 'desc'], [3, 'asc'], [8, 'desc']],
-            columnDefs: [{ targets: 11, visible: false, searchable: false }],
+            order: [[12, 'desc'], [4, 'asc'], [9, 'desc']],
+            columnDefs: [{ targets: 12, visible: false, searchable: false }],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = """
@@ -178,7 +203,7 @@ def _html_shell_humble(
     else:
         dt_opts = """
             pageLength: 25,
-            order: [[3, 'asc'], [8, 'desc']],
+            order: [[4, 'asc'], [9, 'desc']],
             language: { url: "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json" }
         """
         cover_js = ""
@@ -202,6 +227,7 @@ def _html_shell_humble(
                 <th>Game Name</th>
                 <th>Links</th>
                 <th>Bundle</th>
+                <th>Activo hasta</th>
                 <th>Tier</th>
                 <th>Price</th>
                 <th>Reviews</th>
@@ -269,6 +295,7 @@ def extraer_juegos_desde_humble(
 
     parsed = humble.collect_tier_items()
     page_title = parsed.get("title") or page.title().strip() or "Humble Bundle"
+    ends_at, ends_iso = _humble_offer_until(page, start_url)
     tiers_info = {
         "summary": f"{page_title} — pay what you want",
         "tiers": parsed.get("tiers") or [],
@@ -312,7 +339,7 @@ def extraer_juegos_desde_humble(
                     fallbacks.append(steam_img)
                 fallbacks.extend(steam_fbs)
                 data["header_image_fallbacks"] = fallbacks
-            _attach_bundle_link(data, start_url, page_title)
+            _attach_bundle_link(data, start_url, page_title, ends_at, ends_iso)
             games.append(data)
         except Exception as e:
             print(f"[Steam] Error con '{title}': {e}")
@@ -389,7 +416,11 @@ def generar_html_humble_combinado(
                 else:
                     for b in g.get("bundle_links") or []:
                         _attach_bundle_link(
-                            merged[key], b.get("url") or url, b.get("name")
+                            merged[key],
+                            b.get("url") or url,
+                            b.get("name"),
+                            b.get("ends_at") or "",
+                            b.get("ends_at_iso") or "",
                         )
                     for d in g.get("store_deals") or []:
                         _upsert_store_deal(
