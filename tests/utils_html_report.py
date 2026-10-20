@@ -855,24 +855,65 @@ def format_offer_until(raw: str) -> tuple[str, str]:
         return "", ""
 
 
-def _fanatical_offer_until(page: Page) -> tuple[str, str]:
-    """Fecha hasta la que se puede comprar el pick-and-mix (API valid_until)."""
-    m = re.search(r"/pick-and-mix/([^/?#]+)", page.url or "")
-    if not m:
-        return "", ""
-    api = f"https://www.fanatical.com/api/pick-and-mix/{m.group(1)}/en"
+def _format_eur_cents(cents: float) -> str:
+    return f"{cents / 100:.2f}".replace(".", ",") + "€"
+
+
+def _fanatical_from_payload(payload: dict | None) -> tuple[str, str, str, str, list]:
+    """
+    Del JSON de Fanatical: fecha de cierre, precio EUR del tier más barato
+    y tiers ya en euros (el DOM depende de la IP y puede salir en USD/MXN).
+    """
+    if not isinstance(payload, dict):
+        return "", "", "", "", []
+    display, iso = format_offer_until(str(payload.get("valid_until") or ""))
+    parsed: list[dict] = []
+    best: tuple[str, str] | None = None
+    best_cents: float | None = None
+    for tier in payload.get("tiers") or []:
+        cents = (tier.get("price") or {}).get("EUR")
+        qty = tier.get("quantity")
+        if not isinstance(cents, (int, float)) or not qty:
+            continue
+        qty_n = int(qty)
+        label = _format_eur_cents(float(cents))
+        parsed.append({
+            "quantity": str(qty_n),
+            "price": label,
+            "per_item": _format_eur_cents(float(cents) / qty_n),
+        })
+        if best_cents is None or float(cents) < best_cents:
+            best_cents = float(cents)
+            detail = "1 juego" if qty_n == 1 else f"{qty_n} juegos"
+            best = (label, detail)
+    price, detail = best or ("", "")
+    if display or price:
+        print(f"[Fanatical] Activo hasta {display or 'N/A'} · {price} ({detail})")
+    return display, iso, price, detail, parsed
+
+
+def _fetch_fanatical_payload(page: Page, start_url: str) -> dict:
+    """Pide el JSON del pick-and-mix desde la propia página (misma sesión)."""
+    match = re.search(r"/pick-and-mix/([^/?#]+)", start_url or page.url or "")
+    if not match:
+        return {}
+    api = f"https://www.fanatical.com/api/pick-and-mix/{match.group(1)}/en"
     try:
-        resp = page.request.get(api, timeout=20000)
-        if not resp.ok:
-            print(f"[Fanatical] valid_until HTTP {resp.status}")
-            return "", ""
-        raw = str((resp.json() or {}).get("valid_until") or "")
-        display, iso = format_offer_until(raw)
-        print(f"[Fanatical] Activo hasta {display or 'N/A'}")
-        return display, iso
+        data = page.evaluate(
+            """async (api) => {
+                const r = await fetch(api, {
+                    credentials: 'include',
+                    headers: { Accept: 'application/json' },
+                });
+                if (!r.ok) return null;
+                return await r.json();
+            }""",
+            api,
+        )
+        return data if isinstance(data, dict) else {}
     except Exception as e:
-        print(f"[Fanatical] No se pudo leer valid_until: {e}")
-        return "", ""
+        print(f"[Fanatical] No se pudo leer el JSON del bundle: {e}")
+        return {}
 
 
 def _attach_bundle_link(
@@ -915,6 +956,18 @@ def extraer_juegos_desde_bundle(
     Devuelve (titulo_pagina, tiers_info, lista de game_data).
     Cada game_data incluye bundle_url / bundle_links hacia start_url.
     """
+    captured: dict = {}
+
+    def _on_fanatical_api(resp):
+        if "/api/pick-and-mix/" in resp.url and resp.status == 200 and "json" not in captured:
+            try:
+                data = resp.json()
+                if isinstance(data, dict):
+                    captured["json"] = data
+            except Exception:
+                pass
+
+    page.on("response", _on_fanatical_api)
     page.goto(start_url, wait_until="domcontentloaded")
     page_title = page.title().strip() or "Steam Games Report"
     b_name = (bundle_name or page_title).strip()
@@ -923,7 +976,10 @@ def extraer_juegos_desde_bundle(
     home_page.handle_popups()
 
     tiers_info = home_page.get_bundle_tiers()
-    ends_at, ends_iso = _fanatical_offer_until(page)
+    payload = captured.get("json") or _fetch_fanatical_payload(page, start_url)
+    ends_at, ends_iso, eur_price, eur_detail, eur_tiers = _fanatical_from_payload(payload)
+    if eur_tiers:
+        tiers_info["tiers"] = eur_tiers
     jobs = home_page.collect_jobs()
     print(f"Trabajos a procesar en Steam: {len(jobs)}" + (" [pretty]" if pretty else ""))
 
@@ -939,7 +995,10 @@ def extraer_juegos_desde_bundle(
                 )
                 if data:
                     _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
-                    _apply_fanatical_deal(data, tiers_info)
+                    if eur_price:
+                        _upsert_store_deal(data, "Fanatical", eur_price, eur_detail)
+                    else:
+                        _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "search":
                 print(f"[Steam] [{i+1}/{len(jobs)}] Busqueda por nombre: {job['title']}")
@@ -948,7 +1007,10 @@ def extraer_juegos_desde_bundle(
                 )
                 if data:
                     _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
-                    _apply_fanatical_deal(data, tiers_info)
+                    if eur_price:
+                        _upsert_store_deal(data, "Fanatical", eur_price, eur_detail)
+                    else:
+                        _apply_fanatical_deal(data, tiers_info)
                     games.append(data)
             elif job["type"] == "bundle":
                 print(
@@ -965,7 +1027,10 @@ def extraer_juegos_desde_bundle(
                             f"{data['game_name']} *bundled with {bundle_anchor}"
                         )
                         _attach_bundle_link(data, start_url, b_name, ends_at, ends_iso)
-                        _apply_fanatical_deal(data, tiers_info)
+                        if eur_price:
+                            _upsert_store_deal(data, "Fanatical", eur_price, eur_detail)
+                        else:
+                            _apply_fanatical_deal(data, tiers_info)
                         games.append(data)
         except Exception as e:
             print(f"[Steam] Error en trabajo {i} ({job.get('title')}): {e}")

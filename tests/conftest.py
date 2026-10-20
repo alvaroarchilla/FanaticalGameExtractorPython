@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 
@@ -35,4 +37,26 @@ def browser_context_args(browser_context_args):
     return {
         **browser_context_args,
         "viewport": {"width": 1400, "height": 900},
+        "locale": "es-ES",
     }
+
+
+@pytest.fixture(autouse=True)
+def steam_prices_in_euros(context):
+    """Steam muestra Mex$/USD según la IP del runner. Forzar la tienda de España (EUR)."""
+
+    def _handler(route):
+        request = route.request
+        url = request.url
+        if (
+            request.resource_type == "document"
+            and "store.steampowered.com" in url
+            and not re.search(r"(?:^|[?&])cc=", url)
+        ):
+            sep = "&" if "?" in url else "?"
+            route.continue_(url=f"{url}{sep}cc=es")
+            return
+        route.continue_()
+
+    context.route("**/*store.steampowered.com/**", _handler)
+    yield

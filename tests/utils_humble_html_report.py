@@ -21,21 +21,38 @@ from tests.utils_html_report import (
 )
 
 
-def _humble_offer_until(page: Page, start_url: str) -> tuple[str, str]:
-    """Fecha hasta la que se puede comprar el bundle (end_time del HTML)."""
-    try:
-        resp = page.request.get(start_url, timeout=30000)
-        body = resp.text() if resp.ok else ""
-    except Exception as e:
-        print(f"[Humble] No se pudo leer la fecha de fin: {e}")
-        return "", ""
+def _humble_until_from_html(body: str) -> tuple[str, str]:
     match = re.search(r'"end_time\|datetime":\s*"([^"]+)"', body or "")
     if not match:
-        print("[Humble] Sin end_time")
         return "", ""
     display, iso = format_offer_until(match.group(1))
-    print(f"[Humble] Activo hasta {display or 'N/A'}")
+    if display:
+        print(f"[Humble] Activo hasta {display}")
     return display, iso
+
+
+def _humble_offer_until(page: Page, start_url: str, captured_html: str = "") -> tuple[str, str]:
+    """Fecha hasta la que se puede comprar el bundle (end_time del HTML original)."""
+    display, iso = _humble_until_from_html(captured_html)
+    if display:
+        return display, iso
+    try:
+        body = page.content()
+    except Exception:
+        body = ""
+    display, iso = _humble_until_from_html(body)
+    if display:
+        return display, iso
+    try:
+        resp = page.request.get(start_url, timeout=30000)
+        if resp.ok:
+            display, iso = _humble_until_from_html(resp.text())
+            if display:
+                return display, iso
+    except Exception as e:
+        print(f"[Humble] No se pudo leer la fecha de fin: {e}")
+    print("[Humble] Sin end_time")
+    return "", ""
 
 
 def _tiers_html_humble(tiers_info: dict | None, pretty: bool = False) -> str:
@@ -289,13 +306,28 @@ def extraer_juegos_desde_humble(
     """
     Abre un bundle Humble, lee tiers/ítems y enriquece con datos Steam.
     """
+    captured_html = {"body": ""}
+
+    def _on_document(resp):
+        if resp.request.resource_type != "document":
+            return
+        url = (resp.url or "").split("?")[0].rstrip("/")
+        wanted = (start_url or "").split("?")[0].rstrip("/")
+        if wanted and wanted not in url:
+            return
+        try:
+            captured_html["body"] = resp.text()
+        except Exception:
+            pass
+
+    page.on("response", _on_document)
     page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
     humble = HumbleBundlePage(page)
     humble.handle_popups()
 
     parsed = humble.collect_tier_items()
     page_title = parsed.get("title") or page.title().strip() or "Humble Bundle"
-    ends_at, ends_iso = _humble_offer_until(page, start_url)
+    ends_at, ends_iso = _humble_offer_until(page, start_url, captured_html["body"])
     tiers_info = {
         "summary": f"{page_title} — pay what you want",
         "tiers": parsed.get("tiers") or [],
